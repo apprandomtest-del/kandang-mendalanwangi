@@ -1,0 +1,1134 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#d97706">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <title>Kandang Ayam Mendalanwangi</title>
+  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0;font-family:'Nunito','Segoe UI',sans-serif}
+    body{background:#fffbf2;min-height:100vh}
+    button{cursor:pointer;transition:transform .1s}
+    button:active{transform:scale(.96)}
+    input:focus,select:focus{outline:none}
+    .fade{animation:fadeIn .25s ease}
+    @keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+    .spin{animation:spin 1s linear infinite}
+    @keyframes spin{to{transform:rotate(360deg)}}
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// KONFIGURASI
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+const SUPABASE_URL = 'https://fxdhalnzhsfypieibyds.supabase.co
+';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ4ZGhhbG56aHNmeXBpZWlieWRzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMwNTM5NDQsImV4cCI6MjA4ODYyOTk0NH0.abaQImvqb2jwwe8PAL7PdqWPI9sbylYfsq0a_cGK6Q8';
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+const {useState,useEffect,useRef,useCallback} = React;
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+// ── UTILS ──────────────────────────────────────────────────
+const TODAY    = () => new Date().toISOString().slice(0,10);
+const MONTH    = () => new Date().toISOString().slice(0,7);
+const fmt      = d => d ? new Date(d+'T00:00:00').toLocaleDateString('id-ID',{weekday:'long',day:'numeric',month:'long',year:'numeric'}) : '-';
+const fmtS     = d => d ? new Date(d+'T00:00:00').toLocaleDateString('id-ID',{day:'numeric',month:'short',year:'numeric'}) : '-';
+const fmtMonth = m => { if(!m) return '-'; const [y,mo]=m.split('-'); return new Date(y,mo-1,1).toLocaleDateString('id-ID',{month:'long',year:'numeric'}); };
+const fmtN     = (n,dec=0) => Number(n||0).toLocaleString('id-ID',{minimumFractionDigits:dec,maximumFractionDigits:dec});
+const Rp       = n => 'Rp\u00a0'+fmtN(Math.round(n||0));
+const monthOf  = d => (d||'').slice(0,7);
+
+// ── DB ─────────────────────────────────────────────────────
+const DB = {
+  async load(){
+    try{
+      const [h,p,s,pe,pl] = await Promise.all([
+        sb.from('harian').select('*').order('tanggal'),
+        sb.from('penjualan').select('*').order('tanggal',{ascending:false}),
+        sb.from('settings').select('*').eq('id',1).maybeSingle(),
+        sb.from('pengeluaran').select('*').order('tanggal',{ascending:false}),
+        sb.from('pendapatan_lain').select('*').order('tanggal',{ascending:false}),
+      ]);
+      return {
+        harian:(h.data||[]).map(r=>({tanggal:r.tanggal,ayamMati:r.ayam_mati||0,pakan:r.pakan||0,hargaSak:r.harga_sak||0,hargaDO:r.harga_do||0,bentes:r.bentes||0,batches:r.batches||[]})),
+        penjualan:(p.data||[]).map(r=>({id:r.id,tanggal:r.tanggal,jumlahPeti:r.jumlah_peti||0,hargaDO:r.harga_do||0,nama:r.nama||'',statusBayar:r.status_bayar||'lunas'})),
+        pengeluaran:(pe.data||[]).map(r=>({id:r.id,tanggal:r.tanggal,kategori:r.kategori||'',keterangan:r.keterangan||'',jumlah:r.jumlah||0})),
+        pendapatanLain:(pl.data||[]).map(r=>({id:r.id,tanggal:r.tanggal,kategori:r.kategori||'',keterangan:r.keterangan||'',jumlah:r.jumlah||0})),
+        settings:s.data?{populasiAwal:s.data.populasi_awal||3261,pin:s.data.pin||'1234'}:{populasiAwal:3261,pin:'1234'},
+      };
+    }catch(e){console.error(e);return {harian:[],penjualan:[],pengeluaran:[],pendapatanLain:[],settings:{populasiAwal:3261,pin:'1234'}};}
+  },
+  async upsertHarian(r){
+    const {error}=await sb.from('harian').upsert({tanggal:r.tanggal,ayam_mati:r.ayamMati||0,pakan:r.pakan||0,harga_sak:r.hargaSak||0,harga_do:r.hargaDO||0,bentes:r.bentes||0,batches:r.batches||[]},{onConflict:'tanggal'});
+    return !error;
+  },
+  async insertPenjualan(r){
+    const {data,error}=await sb.from('penjualan').insert({tanggal:r.tanggal,jumlah_peti:r.jumlahPeti||0,harga_do:r.hargaDO||0,nama:r.nama||'',status_bayar:r.statusBayar||'lunas'}).select().single();
+    return error?null:data;
+  },
+  async updatePenjualan(id,patch){await sb.from('penjualan').update(patch).eq('id',id);},
+  async deletePenjualan(id){await sb.from('penjualan').delete().eq('id',id);},
+  async insertPengeluaran(r){const {error}=await sb.from('pengeluaran').insert({tanggal:r.tanggal,kategori:r.kategori,keterangan:r.keterangan||'',jumlah:r.jumlah});return !error;},
+  async deletePengeluaran(id){await sb.from('pengeluaran').delete().eq('id',id);},
+  async insertPendapatanLain(r){const {error}=await sb.from('pendapatan_lain').insert({tanggal:r.tanggal,kategori:r.kategori,keterangan:r.keterangan||'',jumlah:r.jumlah});return !error;},
+  async deletePendapatanLain(id){await sb.from('pendapatan_lain').delete().eq('id',id);},
+  async saveSettings(s){await sb.from('settings').upsert({id:1,populasi_awal:s.populasiAwal,pin:s.pin});},
+};
+
+// ── KALKULASI ──────────────────────────────────────────────
+function hitung(rec,popSbl){
+  const B=rec.batches||[];
+  const totalBagus=B.reduce((s,b)=>s+(b.butir||0),0);
+  const totalBentes=rec.bentes||0;
+  const totalSemua=totalBagus+totalBentes;
+  const beratBersih=B.reduce((s,b)=>s+((b.berat||0)-(b.tray||0)*0.205),0);
+  const popSesudah=popSbl-(rec.ayamMati||0);
+  const hd=popSesudah>0?(totalSemua/popSesudah)*100:0;
+  const feedIntake=popSesudah>0?((rec.pakan||0)*1000)/popSesudah:0;
+  const fcr=beratBersih>0?(rec.pakan||0)/beratBersih:0;
+  const stockPeti=beratBersih/10;
+  const mortalityRate=popSbl>0?((rec.ayamMati||0)/popSbl)*100:0;
+  const beratPerButir=totalBagus>0?(beratBersih*1000)/totalBagus:0;
+  const hargaPerKg=(rec.hargaSak||0)/50;
+  const biayaPakan=(rec.pakan||0)*hargaPerKg;
+  const nilaiTelur=beratBersih*(rec.hargaDO||0);
+  const komisi=Math.max(0,0.04*(nilaiTelur-biayaPakan));
+  return {totalBagus,totalBentes,totalSemua,beratBersih,popSesudah,popSebelum:popSbl,hd,feedIntake,fcr,stockPeti,mortalityRate,beratPerButir,hargaPerKg,biayaPakan,nilaiTelur,komisi,totalGaji:70000+komisi};
+}
+function buildEnriched(list,settings){
+  let pop=settings.populasiAwal;
+  return [...list].sort((a,b)=>a.tanggal.localeCompare(b.tanggal)).map(r=>{const c=hitung(r,pop);pop=c.popSesudah;return {...r,...c};});
+}
+function getPopSbl(list,tanggal,settings){
+  return settings.populasiAwal-list.filter(h=>h.tanggal<tanggal).reduce((s,h)=>s+(h.ayamMati||0),0);
+}
+
+// ── AKUNTANSI ──────────────────────────────────────────────
+function hitungBulanan(month, enriched, penjualan, pengeluaran, pendapatanLain){
+  const harian   = enriched.filter(r=>monthOf(r.tanggal)===month);
+  const jual     = penjualan.filter(r=>monthOf(r.tanggal)===month);
+  const keluar   = pengeluaran.filter(r=>monthOf(r.tanggal)===month);
+  const pdLain   = pendapatanLain.filter(r=>monthOf(r.tanggal)===month);
+
+  // PEMASUKAN
+  const pendJual    = jual.filter(p=>p.statusBayar==='lunas').reduce((s,p)=>s+p.jumlahPeti*10*p.hargaDO,0);
+  const pendPiutang = jual.filter(p=>p.statusBayar!=='lunas').reduce((s,p)=>s+p.jumlahPeti*10*p.hargaDO,0);
+  const pendAfkir   = pdLain.filter(r=>r.kategori==='afkir').reduce((s,r)=>s+r.jumlah,0);
+  const pendPupuk   = pdLain.filter(r=>r.kategori==='pupuk').reduce((s,r)=>s+r.jumlah,0);
+  const pendLainnya = pdLain.filter(r=>r.kategori==='lainnya').reduce((s,r)=>s+r.jumlah,0);
+  const totalPendapatan = pendJual+pendAfkir+pendPupuk+pendLainnya;
+
+  // PENGELUARAN
+  const biayaPakan  = harian.reduce((s,r)=>s+r.biayaPakan,0);
+  const biayaGaji   = harian.reduce((s,r)=>s+r.totalGaji,0); // 70rb + komisi per hari
+  const biayaListrik= keluar.filter(r=>r.kategori==='listrik').reduce((s,r)=>s+r.jumlah,0);
+  const biayaObat   = keluar.filter(r=>r.kategori==='obat').reduce((s,r)=>s+r.jumlah,0);
+  const biayaLainnya= keluar.filter(r=>r.kategori==='lainnya').reduce((s,r)=>s+r.jumlah,0);
+  const totalPengeluaran = biayaPakan+biayaGaji+biayaListrik+biayaObat+biayaLainnya;
+
+  const labaBersih = totalPendapatan - totalPengeluaran;
+  const hariKerja  = harian.length;
+
+  return {pendJual,pendPiutang,pendAfkir,pendPupuk,pendLainnya,totalPendapatan,biayaPakan,biayaGaji,biayaListrik,biayaObat,biayaLainnya,totalPengeluaran,labaBersih,hariKerja};
+}
+
+// ── DESIGN TOKENS ──────────────────────────────────────────
+const A='#f59e0b',AD='#b45309',AL='#fef3c7';
+const GR='#16a34a',GL='#dcfce7';
+const RE='#dc2626',RL='#fee2e2';
+const BL='#2563eb',BLL='#eff6ff';
+const PU='#7c3aed',PL='#ede9fe';
+const DK='#0f1923',CA='#1a2535',BO='#2d3f55',TX='#e8f0fe',MU='#7a9bc0';
+
+// ── UI ATOMS ───────────────────────────────────────────────
+const Card=({children,s={}})=>(
+  <div style={{background:'#fff',borderRadius:20,padding:20,boxShadow:'0 2px 12px rgba(0,0,0,0.06)',border:'1.5px solid #f3f4f6',...s}}>{children}</div>
+);
+const SHead=({icon,title,color=AD})=>(
+  <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:16}}>
+    <span style={{fontSize:20}}>{icon}</span>
+    <span style={{fontSize:15,fontWeight:900,color}}>{title}</span>
+  </div>
+);
+const Lbl=({children,unit})=>(
+  <div style={{fontSize:13,fontWeight:800,color:'#374151',marginBottom:6,display:'flex',justifyContent:'space-between'}}>
+    <span>{children}</span>
+    {unit&&<span style={{background:'#f3f4f6',color:'#6b7280',borderRadius:8,padding:'2px 8px',fontSize:11,fontWeight:700}}>{unit}</span>}
+  </div>
+);
+const Bdg=({label,value,color='#374151',bg='#f3f4f6'})=>(
+  <div style={{background:bg,borderRadius:12,padding:'10px 12px',flex:1,minWidth:0}}>
+    <div style={{fontSize:10,fontWeight:700,color:'#6b7280',marginBottom:3}}>{label}</div>
+    <div style={{fontSize:14,fontWeight:900,color,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{value}</div>
+  </div>
+);
+const Stepper=({value,onChange,min=0,max=999,color='#374151'})=>{
+  const v=parseInt(value)||0;
+  return(
+    <div style={{display:'flex',alignItems:'center',border:'2.5px solid #e5e7eb',borderRadius:16,overflow:'hidden',background:'#fff'}}>
+      <button onClick={()=>onChange(Math.max(min,v-1))} style={{width:58,height:58,background:'#f9fafb',border:'none',fontSize:30,fontWeight:900,color:'#9ca3af',flexShrink:0}}>−</button>
+      <input type="number" value={value} min={min} max={max} onChange={e=>onChange(parseInt(e.target.value)||0)}
+        style={{flex:1,textAlign:'center',fontSize:34,fontWeight:900,color,border:'none',outline:'none',padding:'8px 0',background:'#fff'}}/>
+      <button onClick={()=>onChange(Math.min(max,v+1))} style={{width:58,height:58,background:'#f9fafb',border:'none',fontSize:30,fontWeight:900,color:GR,flexShrink:0}}>+</button>
+    </div>
+  );
+};
+const RpInput=({value,onChange,placeholder='0'})=>{
+  const [disp,setDisp]=useState(value?fmtN(value):'');
+  useEffect(()=>{setDisp(value?fmtN(value):'');},[value]);
+  return(
+    <div style={{display:'flex',alignItems:'center',border:'2.5px solid #e5e7eb',borderRadius:14,background:'#fff',overflow:'hidden'}}>
+      <span style={{padding:'0 14px',fontSize:16,fontWeight:800,color:'#d1d5db',flexShrink:0,borderRight:'2px solid #f3f4f6',height:54,display:'flex',alignItems:'center'}}>Rp</span>
+      <input type="text" inputMode="numeric" value={disp} placeholder={placeholder}
+        onChange={e=>{const n=parseInt(e.target.value.replace(/\D/g,''))||0;setDisp(n?fmtN(n):'');onChange(n);}}
+        style={{flex:1,fontSize:24,fontWeight:900,color:'#1f2937',border:'none',outline:'none',padding:'12px 14px',textAlign:'right'}}/>
+    </div>
+  );
+};
+const KgInp=({value,onChange,placeholder='0',step='1'})=>(
+  <div style={{display:'flex',alignItems:'center',border:'2.5px solid #e5e7eb',borderRadius:14,background:'#fff',overflow:'hidden'}}>
+    <input type="number" min="0" step={step} value={value} placeholder={placeholder} onChange={e=>onChange(e.target.value)}
+      style={{flex:1,fontSize:24,fontWeight:900,color:'#1f2937',border:'none',outline:'none',padding:'12px 14px',textAlign:'right'}}/>
+    <span style={{padding:'0 16px',fontSize:15,fontWeight:800,color:'#d1d5db',borderLeft:'2px solid #f3f4f6',height:54,display:'flex',alignItems:'center'}}>kg</span>
+  </div>
+);
+const BtrInp=({value,onChange,placeholder='0'})=>(
+  <div style={{display:'flex',alignItems:'center',border:'2.5px solid #e5e7eb',borderRadius:14,background:'#fff',overflow:'hidden'}}>
+    <input type="number" min="0" step="1" value={value} placeholder={placeholder} onChange={e=>onChange(e.target.value)}
+      style={{flex:1,fontSize:24,fontWeight:900,color:'#1f2937',border:'none',outline:'none',padding:'12px 14px',textAlign:'right'}}/>
+    <span style={{padding:'0 16px',fontSize:15,fontWeight:800,color:'#d1d5db',borderLeft:'2px solid #f3f4f6',height:54,display:'flex',alignItems:'center'}}>butir</span>
+  </div>
+);
+const BigBtn=({onClick,disabled,loading,color=GR,children})=>(
+  <button onClick={onClick} disabled={disabled||loading} style={{
+    width:'100%',padding:'17px 0',
+    background:disabled?'#e5e7eb':loading?A:`linear-gradient(135deg,${color},${color}cc)`,
+    border:'none',borderRadius:16,color:disabled?'#9ca3af':'#fff',fontSize:17,fontWeight:900,
+    boxShadow:disabled||loading?'none':`0 6px 20px ${color}40`,
+  }}>
+    {loading?<span className="spin" style={{display:'inline-block',fontSize:18}}>⏳</span>:children}
+  </button>
+);
+function FChart({data,dataKey,color,type='line'}){
+  const ref=useRef(null),inst=useRef(null);
+  useEffect(()=>{
+    if(!ref.current||!data.length)return;
+    if(inst.current){inst.current.destroy();inst.current=null;}
+    inst.current=new Chart(ref.current,{
+      type:type==='bar'?'bar':'line',
+      data:{labels:data.map(d=>d.t),datasets:[{data:data.map(d=>d[dataKey]),backgroundColor:type==='bar'?color+'55':color+'18',borderColor:color,borderWidth:2,fill:type==='line',tension:.3,pointRadius:data.length>20?0:3,pointBackgroundColor:color,borderRadius:4}]},
+      options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>' '+fmtN(c.raw,2)}}},scales:{x:{grid:{color:'#f3f4f6'},ticks:{color:'#9ca3af',font:{size:10}}},y:{grid:{color:'#f3f4f6'},ticks:{color:'#9ca3af',font:{size:10}}}}},
+    });
+    return()=>{if(inst.current){inst.current.destroy();inst.current=null;}};
+  },[JSON.stringify(data.map(d=>d[dataKey])),color,type]);
+  if(!data.length)return <div style={{height:140,display:'flex',alignItems:'center',justifyContent:'center',color:'#d1d5db',fontSize:13}}>Belum ada data</div>;
+  return <div style={{height:140,position:'relative'}}><canvas ref={ref}/></div>;
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// APP ROOT
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+function App(){
+  const [role,setRole]=useState(null);
+  const [pin,setPin]=useState('');
+  const [pinErr,setPinErr]=useState(false);
+  const [data,setData]=useState(null);
+  const reload=useCallback(async()=>{setData(await DB.load());},[]);
+  useEffect(()=>{reload();},[]);
+  if(!data)return(
+    <div style={{minHeight:'100vh',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',background:'#fffbf2',gap:14}}>
+      <div className="spin" style={{fontSize:52}}>🥚</div>
+      <div style={{fontSize:16,fontWeight:700,color:AD}}>Memuat data...</div>
+    </div>
+  );
+  if(!role)return <RoleSelect onSelect={r=>{if(r==='pemilik'){setPin('');setPinErr(false);setRole('pin');}else setRole(r);}}/>;
+  if(role==='pin')return <PinScreen pin={pin} onChange={setPin} err={pinErr} onSubmit={()=>{if(pin===data.settings.pin){setRole('pemilik');setPinErr(false);}else setPinErr(true);}} onBack={()=>setRole(null)}/>;
+  if(role==='petugas')return <PetugasView data={data} onReload={reload} onBack={()=>setRole(null)}/>;
+  if(role==='pemilik')return <PemilikView data={data} onReload={reload} onBack={()=>setRole(null)}/>;
+}
+
+// ─── ROLE SELECT ──────────────────────────────────────────
+function RoleSelect({onSelect}){
+  return(
+    <div style={{minHeight:'100vh',background:'linear-gradient(160deg,#78350f 0%,#b45309 35%,#d97706 65%,#fef3c7 100%)',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:24,overflow:'hidden',position:'relative'}}>
+      {[['8%','12%',30,.15,10],['84%','7%',22,.15,-18],['5%','78%',26,.12,25],['87%','72%',20,.12,-8],['50%','88%',24,.1,5]].map(([l,t,fs,op,rot],i)=>(
+        <div key={i} style={{position:'absolute',left:l,top:t,fontSize:fs,opacity:op,transform:`rotate(${rot}deg)`}}>🥚</div>
+      ))}
+      <div style={{textAlign:'center',marginBottom:40}}>
+        <div style={{fontSize:80,lineHeight:1,filter:'drop-shadow(0 8px 20px rgba(0,0,0,.3))'}}>🐔</div>
+        <div style={{color:'rgba(255,255,255,.75)',fontSize:11,fontWeight:800,letterSpacing:4,textTransform:'uppercase',margin:'12px 0 4px'}}>Kandang Ayam</div>
+        <div style={{color:'#fff',fontSize:28,fontWeight:900,textShadow:'0 3px 16px rgba(0,0,0,.3)'}}>MENDALANWANGI</div>
+        <div style={{color:'#fde68a',fontSize:13,marginTop:6,fontWeight:600}}>Sistem Manajemen Produksi Telur</div>
+      </div>
+      <div style={{display:'flex',flexDirection:'column',gap:14,width:'100%',maxWidth:360}}>
+        {[{r:'petugas',em:'👷',ti:'PETUGAS KANDANG',su:'Input data harian & penjualan',bg:'#fff',co:'#78350f',ba:'INPUT DATA',bc:A},
+          {r:'pemilik',em:'👔',ti:'PEMILIK',su:'Dashboard, laporan & keuangan',bg:'linear-gradient(135deg,#1e3a5f,#0f2040)',co:'#e0f0ff',ba:'BUTUH PIN',bc:'#60a5fa'}
+        ].map(({r,em,ti,su,bg,co,ba,bc})=>(
+          <button key={r} onClick={()=>onSelect(r)} style={{background:bg,border:'none',borderRadius:22,padding:'18px 20px',display:'flex',alignItems:'center',gap:14,textAlign:'left',boxShadow:'0 8px 32px rgba(0,0,0,.2)'}}>
+            <span style={{fontSize:48,flexShrink:0}}>{em}</span>
+            <div style={{flex:1}}>
+              <div style={{fontSize:18,fontWeight:900,color:co}}>{ti}</div>
+              <div style={{fontSize:13,color:co,opacity:.65,marginTop:2,fontWeight:600}}>{su}</div>
+            </div>
+            <div style={{background:bc+'20',border:`2px solid ${bc}44`,borderRadius:10,padding:'3px 9px',fontSize:10,fontWeight:800,color:bc,letterSpacing:.8,flexShrink:0}}>{ba}</div>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─── PIN ──────────────────────────────────────────────────
+function PinScreen({pin,onChange,err,onSubmit,onBack}){
+  return(
+    <div style={{minHeight:'100vh',background:'linear-gradient(160deg,#0f1923,#1e3a5f)',display:'flex',alignItems:'center',justifyContent:'center',padding:24}}>
+      <div style={{background:'rgba(255,255,255,.05)',border:'2px solid rgba(255,255,255,.1)',borderRadius:28,padding:'40px 28px',textAlign:'center',width:'100%',maxWidth:340}}>
+        <div style={{fontSize:56,marginBottom:12}}>🔐</div>
+        <div style={{color:'#fff',fontWeight:900,fontSize:22,marginBottom:6}}>PIN Pemilik</div>
+        <div style={{color:MU,fontSize:14,marginBottom:28,fontWeight:600}}>Masukkan PIN untuk masuk</div>
+        <input autoFocus type="password" maxLength={6} value={pin} onChange={e=>onChange(e.target.value)} onKeyDown={e=>e.key==='Enter'&&onSubmit()}
+          style={{fontSize:44,letterSpacing:20,textAlign:'center',border:`3px solid ${err?'#f87171':BL}`,borderRadius:16,padding:'14px 20px',width:'100%',background:'rgba(255,255,255,.08)',color:'#fff',outline:'none'}}/>
+        {err&&<div style={{color:'#f87171',marginTop:10,fontWeight:700,fontSize:14}}>❌ PIN salah</div>}
+        <div style={{display:'flex',gap:10,marginTop:22}}>
+          <button onClick={onBack} style={{flex:1,padding:'13px 0',borderRadius:12,border:`2px solid ${BO}`,background:'transparent',color:MU,fontWeight:700,fontSize:14}}>← Kembali</button>
+          <button onClick={onSubmit} style={{flex:2,padding:'13px 0',borderRadius:12,border:'none',background:'linear-gradient(135deg,#2563eb,#1d4ed8)',color:'#fff',fontWeight:800,fontSize:15}}>Masuk →</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// PETUGAS
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+function PetugasView({data,onReload,onBack}){
+  const [tab,setTab]=useState('harian');
+  return(
+    <div style={{minHeight:'100vh',background:'#fffbf2'}}>
+      <div style={{background:'linear-gradient(135deg,#92400e,#b45309,#d97706)',position:'sticky',top:0,zIndex:20,boxShadow:'0 4px 20px rgba(146,64,14,.35)'}}>
+        <div style={{display:'flex',alignItems:'center',gap:12,padding:'14px 18px 0'}}>
+          <button onClick={onBack} style={{background:'rgba(255,255,255,.18)',border:'none',borderRadius:10,color:'#fff',width:40,height:40,fontSize:18,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>←</button>
+          <div>
+            <div style={{color:'rgba(255,255,255,.65)',fontSize:10,fontWeight:800,letterSpacing:3,textTransform:'uppercase'}}>Kandang Ayam Mendalanwangi</div>
+            <div style={{color:'#fff',fontWeight:900,fontSize:17}}>👷 Halaman Petugas</div>
+          </div>
+        </div>
+        <div style={{display:'flex',marginTop:12}}>
+          {[['harian','🥚 Harian'],['penjualan','💰 Penjualan']].map(([t,l])=>(
+            <button key={t} onClick={()=>setTab(t)} style={{flex:1,padding:'10px 0',border:'none',background:'transparent',color:tab===t?'#fff':'rgba(255,255,255,.5)',fontWeight:tab===t?900:600,fontSize:15,borderBottom:`3px solid ${tab===t?'#fff':'transparent'}`,transition:'all .2s'}}>{l}</button>
+          ))}
+        </div>
+      </div>
+      <div style={{padding:'16px 16px 100px',maxWidth:520,margin:'0 auto'}}>
+        {tab==='harian'?<InputHarian data={data} onReload={onReload}/>:<InputPenjualan data={data} onReload={onReload}/>}
+      </div>
+    </div>
+  );
+}
+
+// ─── INPUT HARIAN ─────────────────────────────────────────
+function InputHarian({data,onReload}){
+  const [step,setStep]=useState(1);
+  const [saving,setSaving]=useState(false);
+  const [tanggal,setTanggal]=useState(TODAY());
+  const [ayamMati,setAyamMati]=useState(0);
+  const [pakan,setPakan]=useState('');
+  const [hargaSak,setHargaSak]=useState(0);
+  const [hargaDO,setHargaDO]=useState(0);
+  const [batches,setBatches]=useState([]);
+  const [bentes,setBentes]=useState(0);
+  const [showBentes,setShowBentes]=useState(false);
+  const [bfBerat,setBfBerat]=useState('');
+  const [bfTray,setBfTray]=useState(10);
+  const [bfButir,setBfButir]=useState('');
+  const existing=data.harian.find(h=>h.tanggal===tanggal);
+  const popSbl=getPopSbl(data.harian.filter(h=>h.tanggal!==tanggal),tanggal,data.settings);
+  const step1ok=pakan&&hargaSak>0&&hargaDO>0;
+  const bfBersih=(parseFloat(bfBerat)||0)-(bfTray*0.205);
+  const runTray=batches.reduce((s,b)=>s+b.tray,0);
+  const runBagus=batches.reduce((s,b)=>s+b.butir,0);
+  const runBersih=batches.reduce((s,b)=>s+((b.berat)-(b.tray*0.205)),0);
+  const fakeRec={tanggal,ayamMati,pakan:parseFloat(pakan)||0,hargaSak,hargaDO,bentes,batches};
+  const C2=hitung(fakeRec,popSbl);
+  const tambah=()=>{
+    if(!bfBerat||!bfButir)return;
+    setBatches(p=>[...p,{berat:parseFloat(bfBerat),tray:parseInt(bfTray)||10,butir:parseInt(bfButir)||0}]);
+    setBfBerat('');setBfButir('');setBfTray(10);
+  };
+  const simpan=async()=>{setSaving(true);await DB.upsertHarian(fakeRec);await onReload();setSaving(false);setStep(4);};
+  const reset=()=>{setStep(1);setBatches([]);setAyamMati(0);setPakan('');setHargaSak(0);setHargaDO(0);setBentes(0);setShowBentes(false);setTanggal(TODAY());};
+
+  if(step===4)return(
+    <div className="fade" style={{display:'flex',flexDirection:'column',gap:16,paddingTop:8}}>
+      <div style={{background:'linear-gradient(135deg,#16a34a,#15803d)',borderRadius:24,padding:'28px 20px',textAlign:'center',boxShadow:'0 8px 24px rgba(22,163,74,.25)'}}>
+        <div style={{fontSize:60,marginBottom:8}}>🎉</div>
+        <div style={{color:'#fff',fontWeight:900,fontSize:22}}>Data Tersimpan!</div>
+        <div style={{color:'rgba(255,255,255,.8)',marginTop:4,fontWeight:600,fontSize:14}}>{fmt(tanggal)}</div>
+      </div>
+      <Card>
+        <SHead icon="📊" title="Rekap Hari Ini"/>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:12}}>
+          <Bdg label="Total Butir" value={fmtN(C2.totalSemua)+' butir'} color={A}/>
+          <Bdg label="Berat Bersih" value={fmtN(C2.beratBersih,3)+' kg'} color={BL}/>
+          <Bdg label="Stok Peti" value={fmtN(C2.stockPeti,2)+' peti'} color={PU}/>
+          <Bdg label="Populasi" value={fmtN(C2.popSesudah)+' ekor'} color={GR}/>
+        </div>
+        <div style={{background:GL,borderRadius:14,padding:'14px 16px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+          <div>
+            <div style={{fontSize:12,fontWeight:700,color:'#15803d'}}>💼 Gaji Hari Ini</div>
+            <div style={{fontSize:11,color:'#6b7280',fontWeight:600,marginTop:2}}>Pokok {Rp(70000)} + Komisi {Rp(Math.round(C2.komisi))}</div>
+          </div>
+          <div style={{fontWeight:900,fontSize:24,color:GR}}>{Rp(Math.round(C2.totalGaji))}</div>
+        </div>
+      </Card>
+      <BigBtn onClick={reset} color={A}>➕ Input Hari Baru</BigBtn>
+    </div>
+  );
+
+  return(
+    <div style={{display:'flex',flexDirection:'column',gap:16}} className="fade">
+      <div style={{display:'flex',gap:0,alignItems:'center',padding:'4px 0'}}>
+        {['Info','Telur','Konfirmasi'].map((l,i)=>(
+          <React.Fragment key={l}>
+            <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:3,flex:1}}>
+              <div style={{width:34,height:34,borderRadius:'50%',background:step>i+1?GR:step===i+1?A:'#e5e7eb',color:'#fff',display:'flex',alignItems:'center',justifyContent:'center',fontWeight:900,fontSize:14,transition:'all .3s',boxShadow:step===i+1?`0 4px 12px ${A}55`:'none'}}>
+                {step>i+1?'✓':i+1}
+              </div>
+              <div style={{fontSize:10,fontWeight:700,color:step===i+1?AD:'#9ca3af'}}>{l}</div>
+            </div>
+            {i<2&&<div style={{flex:2,height:3,background:step>i+1?GR:'#e5e7eb',borderRadius:99,marginBottom:14,transition:'all .3s'}}/>}
+          </React.Fragment>
+        ))}
+      </div>
+
+      {step===1&&<>
+        {existing&&<div style={{background:AL,border:`2px solid ${A}`,borderRadius:12,padding:'10px 14px',fontSize:13,fontWeight:700,color:AD}}>⚠️ Data {fmtS(tanggal)} sudah ada — akan ditimpa</div>}
+        <Card>
+          <SHead icon="📅" title="Tanggal"/>
+          <input type="date" value={tanggal} onChange={e=>setTanggal(e.target.value)}
+            style={{width:'100%',fontSize:18,fontWeight:700,border:'2.5px solid #e5e7eb',borderRadius:14,padding:'12px 14px',color:'#1f2937',background:'#fff',outline:'none'}}/>
+          <div style={{marginTop:10,background:'#fff7ed',borderRadius:10,padding:'8px 12px',fontSize:13,fontWeight:700,color:AD}}>
+            🐔 Populasi: <span style={{color:A,fontSize:15}}>{fmtN(popSbl)} ekor</span>
+          </div>
+        </Card>
+        <Card>
+          <SHead icon="💀" title="Ayam Mati" color={RE}/>
+          <Stepper value={ayamMati} onChange={setAyamMati} color={RE}/>
+          {ayamMati>0&&<div style={{marginTop:8,background:RL,borderRadius:10,padding:'7px 12px',fontSize:13,fontWeight:700,color:RE}}>Sisa: {fmtN(popSbl-ayamMati)} ekor</div>}
+        </Card>
+        <Card>
+          <SHead icon="🌾" title="Pakan"/>
+          <Lbl unit="kg">Jumlah Pakan</Lbl>
+          <KgInp value={pakan} onChange={setPakan} placeholder="400"/>
+          <div style={{height:16}}/>
+          <Lbl>Harga Pakan <span style={{fontSize:12,color:'#9ca3af',fontWeight:600}}>per sak 50 kg</span></Lbl>
+          <RpInput value={hargaSak} onChange={setHargaSak} placeholder="350.000"/>
+          {hargaSak>0&&<div style={{marginTop:8,fontSize:13,color:'#6b7280',fontWeight:600}}>= {Rp(hargaSak/50)} per kg</div>}
+        </Card>
+        <Card>
+          <SHead icon="💵" title="Harga DO Telur" color={BL}/>
+          <Lbl>Harga beli per kg</Lbl>
+          <RpInput value={hargaDO} onChange={setHargaDO} placeholder="27.000"/>
+        </Card>
+        <BigBtn onClick={()=>setStep(2)} disabled={!step1ok} color={GR}>Lanjut → Input Telur 🥚</BigBtn>
+      </>}
+
+      {step===2&&<>
+        {batches.length>0&&(
+          <div style={{background:`linear-gradient(135deg,${DK},${CA})`,borderRadius:18,padding:16,display:'flex',gap:8,flexWrap:'wrap'}}>
+            <Bdg label="Total Tray" value={fmtN(runTray)} color={A} bg='rgba(255,255,255,.07)'/>
+            <Bdg label="Butir Bagus" value={fmtN(runBagus)+' butir'} color='#34d399' bg='rgba(255,255,255,.07)'/>
+            <Bdg label="Berat Bersih" value={fmtN(runBersih,2)+' kg'} color='#60a5fa' bg='rgba(255,255,255,.07)'/>
+          </div>
+        )}
+        <Card>
+          <SHead icon="🧺" title={`Kelompok Tray ke-${batches.length+1}`}/>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14,marginBottom:14}}>
+            <div><Lbl>Jumlah Tray</Lbl><Stepper value={bfTray} onChange={setBfTray} min={1} max={50}/></div>
+            <div><Lbl unit="kg">Berat Kotor</Lbl><KgInp value={bfBerat} onChange={setBfBerat} placeholder="20.95" step="0.01"/></div>
+          </div>
+          {bfBerat&&bfTray>0&&(
+            <div style={{background:GL,border:'2px solid #86efac',borderRadius:12,padding:'12px 16px',marginBottom:14,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+              <div>
+                <div style={{fontSize:12,fontWeight:700,color:'#15803d'}}>⚖️ Berat Bersih</div>
+                <div style={{fontSize:11,color:'#6b7280',fontWeight:600}}>{bfBerat} − ({bfTray} × 0,205)</div>
+              </div>
+              <div style={{fontWeight:900,fontSize:28,color:GR}}>{fmtN(bfBersih,3)} <span style={{fontSize:14}}>kg</span></div>
+            </div>
+          )}
+          <Lbl unit="butir">Jumlah Butir Bagus</Lbl>
+          <BtrInp value={bfButir} onChange={setBfButir} placeholder="300"/>
+        </Card>
+        <BigBtn onClick={tambah} disabled={!bfBerat||!bfButir} color={A}>➕ Tambah Tray</BigBtn>
+        {batches.length>0&&(
+          <Card>
+            <SHead icon="📋" title="Daftar Batch"/>
+            {batches.map((b,i)=>(
+              <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'10px 0',borderTop:i>0?'1px solid #f3f4f6':'none'}}>
+                <div style={{display:'flex',alignItems:'center',gap:8}}>
+                  <span style={{background:AL,color:AD,borderRadius:8,padding:'2px 8px',fontSize:12,fontWeight:800}}>#{i+1}</span>
+                  <span style={{fontSize:14,fontWeight:700,color:'#374151'}}>{b.tray} tray · {fmtN(b.butir)} butir</span>
+                </div>
+                <div style={{display:'flex',alignItems:'center',gap:8}}>
+                  <span style={{fontWeight:800,color:GR,fontSize:14}}>{fmtN(b.berat-b.tray*0.205,3)} kg</span>
+                  <button onClick={()=>setBatches(p=>p.filter((_,j)=>j!==i))} style={{background:RL,border:'none',borderRadius:8,padding:'4px 10px',color:RE,fontWeight:800}}>✕</button>
+                </div>
+              </div>
+            ))}
+          </Card>
+        )}
+        {batches.length>0&&!showBentes&&(
+          <button onClick={()=>setShowBentes(true)} style={{width:'100%',padding:'14px 0',background:'#fff',border:'2.5px dashed #fca5a5',borderRadius:16,color:RE,fontSize:16,fontWeight:800}}>
+            🔴 Catat Telur Bentes? Ketuk di sini
+          </button>
+        )}
+        {batches.length>0&&showBentes&&(
+          <Card s={{border:'2px solid #fca5a5'}}>
+            <SHead icon="🔴" title="Telur Bentes" color={RE}/>
+            <Stepper value={bentes} onChange={setBentes} color={RE}/>
+          </Card>
+        )}
+        {batches.length>0&&<BigBtn onClick={()=>setStep(3)} color={PU}>Lihat Rekap & Konfirmasi →</BigBtn>}
+        <button onClick={()=>setStep(1)} style={{width:'100%',padding:'13px 0',background:'transparent',border:'2px solid #e5e7eb',borderRadius:14,color:'#9ca3af',fontSize:15,fontWeight:700}}>← Kembali</button>
+      </>}
+
+      {step===3&&<>
+        <div style={{background:`linear-gradient(135deg,${PU},#6d28d9)`,borderRadius:20,padding:'18px 20px'}}>
+          <div style={{color:'rgba(255,255,255,.75)',fontSize:12,fontWeight:700,marginBottom:4}}>Cek sebelum simpan</div>
+          <div style={{color:'#fff',fontWeight:900,fontSize:18}}>{fmt(tanggal)}</div>
+        </div>
+        <Card>
+          <SHead icon="📊" title="Ringkasan"/>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:12}}>
+            <Bdg label="💀 Ayam Mati" value={fmtN(ayamMati)+' ekor'} color={ayamMati>0?RE:'#374151'}/>
+            <Bdg label="🌾 Pakan" value={fmtN(parseFloat(pakan)||0,1)+' kg'}/>
+            <Bdg label="🏷️ Harga Pakan" value={Rp(hargaSak)+'/sak'}/>
+            <Bdg label="💵 Harga DO" value={Rp(hargaDO)+'/kg'} color={BL}/>
+            <Bdg label="🥚 Butir Bagus" value={fmtN(C2.totalBagus)+' butir'} color={A}/>
+            <Bdg label="🔴 Bentes" value={fmtN(bentes)+' butir'} color={bentes>0?RE:'#374151'}/>
+            <Bdg label="⚖️ Berat Bersih" value={fmtN(C2.beratBersih,3)+' kg'} color={BL}/>
+            <Bdg label="📦 Stok Peti" value={fmtN(C2.stockPeti,2)+' peti'} color={PU}/>
+            <Bdg label="🐔 Populasi" value={fmtN(C2.popSesudah)+' ekor'} color={GR}/>
+            <Bdg label="📈 HD" value={fmtN(C2.hd,1)+'%'} color='#ea580c'/>
+          </div>
+          <div style={{background:GL,borderRadius:14,padding:'14px 16px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+            <div>
+              <div style={{fontSize:12,fontWeight:700,color:'#15803d'}}>💼 Gaji Hari Ini</div>
+              <div style={{fontSize:11,color:'#6b7280',fontWeight:600,marginTop:2}}>Pokok {Rp(70000)} + Komisi {Rp(Math.round(C2.komisi))}</div>
+            </div>
+            <div style={{fontWeight:900,fontSize:24,color:GR}}>{Rp(Math.round(C2.totalGaji))}</div>
+          </div>
+        </Card>
+        <div style={{display:'flex',gap:12}}>
+          <button onClick={()=>setStep(2)} style={{flex:1,padding:'15px 0',background:'transparent',border:'2px solid #e5e7eb',borderRadius:14,color:'#9ca3af',fontSize:15,fontWeight:700}}>← Edit</button>
+          <BigBtn onClick={simpan} loading={saving}>✅ SIMPAN DATA</BigBtn>
+        </div>
+      </>}
+    </div>
+  );
+}
+
+// ─── INPUT PENJUALAN ──────────────────────────────────────
+function InputPenjualan({data,onReload}){
+  const [tanggal,setTanggal]=useState(TODAY());
+  const [jumlahPeti,setJumlahPeti]=useState('');
+  const [hargaDO,setHargaDO]=useState(0);
+  const [nama,setNama]=useState('');
+  const [status,setStatus]=useState('lunas');
+  const [saving,setSaving]=useState(false);
+  const [saved,setSaved]=useState(false);
+  const valid=jumlahPeti&&hargaDO>0;
+  const totalNilai=(parseFloat(jumlahPeti)||0)*10*hargaDO;
+  const simpan=async()=>{
+    setSaving(true);
+    await DB.insertPenjualan({tanggal,jumlahPeti:parseFloat(jumlahPeti),hargaDO,nama,statusBayar:status});
+    await onReload();setSaving(false);setSaved(true);setTimeout(()=>setSaved(false),3000);
+    setJumlahPeti('');setHargaDO(0);setNama('');setStatus('lunas');
+  };
+  return(
+    <div style={{display:'flex',flexDirection:'column',gap:16}} className="fade">
+      {saved&&<div style={{background:'linear-gradient(135deg,#16a34a,#15803d)',borderRadius:16,padding:'14px 20px',color:'#fff',fontWeight:900,fontSize:17,textAlign:'center'}}>✅ Penjualan tersimpan!</div>}
+      <Card>
+        <SHead icon="📅" title="Tanggal Penjualan"/>
+        <input type="date" value={tanggal} onChange={e=>setTanggal(e.target.value)}
+          style={{width:'100%',fontSize:18,fontWeight:700,border:'2.5px solid #e5e7eb',borderRadius:14,padding:'12px 14px',color:'#1f2937',background:'#fff',outline:'none'}}/>
+      </Card>
+      <Card>
+        <SHead icon="📦" title="Jumlah Peti Terjual"/>
+        <Lbl>1 peti = 10 kg berat bersih</Lbl>
+        <div style={{display:'flex',alignItems:'center',border:'2.5px solid #e5e7eb',borderRadius:14,background:'#fff',overflow:'hidden'}}>
+          <input type="number" min="0" step="0.5" value={jumlahPeti} onChange={e=>setJumlahPeti(e.target.value)} placeholder="0"
+            style={{flex:1,fontSize:28,fontWeight:900,color:'#1f2937',border:'none',outline:'none',padding:'14px 16px',textAlign:'right'}}/>
+          <span style={{padding:'0 16px',fontSize:14,fontWeight:800,color:'#d1d5db',borderLeft:'2px solid #f3f4f6',height:58,display:'flex',alignItems:'center',flexShrink:0}}>peti</span>
+        </div>
+        {jumlahPeti&&<div style={{marginTop:8,fontSize:13,color:GR,fontWeight:700}}>= {fmtN((parseFloat(jumlahPeti)||0)*10,0)} kg</div>}
+      </Card>
+      <Card>
+        <SHead icon="💵" title="Harga DO per kg" color={BL}/>
+        <RpInput value={hargaDO} onChange={setHargaDO} placeholder="27.000"/>
+        {totalNilai>0&&(
+          <div style={{marginTop:12,background:'linear-gradient(135deg,#1d4ed8,#2563eb)',borderRadius:14,padding:'14px 18px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+            <span style={{color:'rgba(255,255,255,.8)',fontSize:13,fontWeight:700}}>💰 Total Nilai</span>
+            <span style={{color:'#fff',fontWeight:900,fontSize:22}}>{Rp(totalNilai)}</span>
+          </div>
+        )}
+      </Card>
+      <Card>
+        <SHead icon="👤" title="Nama Pembeli"/>
+        <input type="text" value={nama} onChange={e=>setNama(e.target.value)} placeholder="Opsional — contoh: Bu Sari"
+          style={{width:'100%',fontSize:16,fontWeight:600,border:'2.5px solid #e5e7eb',borderRadius:14,padding:'12px 14px',color:'#1f2937',outline:'none'}}/>
+      </Card>
+      <Card>
+        <SHead icon="💳" title="Status Bayar"/>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+          {[['lunas','✅ LUNAS',GR,GL],['belum lunas','⏳ BELUM',RE,RL]].map(([s,l,clr,bg])=>(
+            <button key={s} onClick={()=>setStatus(s)} style={{padding:'18px 0',border:`3px solid ${status===s?clr:'#e5e7eb'}`,borderRadius:14,background:status===s?bg:'#fff',color:status===s?clr:'#9ca3af',fontWeight:900,fontSize:15}}>
+              {l}
+            </button>
+          ))}
+        </div>
+      </Card>
+      <BigBtn onClick={simpan} disabled={!valid} loading={saving}>✅ SIMPAN PENJUALAN</BigBtn>
+    </div>
+  );
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// PEMILIK
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+function PemilikView({data,onReload,onBack}){
+  const [tab,setTab]=useState('dashboard');
+  const enriched=buildEnriched(data.harian,data.settings);
+  const TABS=[{id:'dashboard',ico:'📊',l:'Dashboard'},{id:'grafik',ico:'📈',l:'Grafik'},{id:'keuangan',ico:'🧾',l:'Keuangan'},{id:'penjualan',ico:'💰',l:'Penjualan'},{id:'gaji',ico:'💼',l:'Gaji'},{id:'setting',ico:'⚙️',l:'Setting'}];
+  return(
+    <div style={{minHeight:'100vh',background:DK}}>
+      <div style={{background:`linear-gradient(135deg,${DK},${CA})`,position:'sticky',top:0,zIndex:20,borderBottom:`1px solid ${BO}`}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'14px 18px 0'}}>
+          <div>
+            <div style={{color:MU,fontSize:10,fontWeight:800,letterSpacing:3,textTransform:'uppercase'}}>Kandang Ayam Mendalanwangi</div>
+            <div style={{color:TX,fontWeight:900,fontSize:17}}>👔 Dashboard Pemilik</div>
+          </div>
+          <button onClick={onBack} style={{background:BO,border:'none',borderRadius:10,color:MU,padding:'8px 14px',fontSize:13,fontWeight:700}}>Keluar</button>
+        </div>
+        <div style={{display:'flex',marginTop:12,overflowX:'auto'}}>
+          {TABS.map(t=>(
+            <button key={t.id} onClick={()=>setTab(t.id)} style={{flexShrink:0,flex:1,minWidth:52,padding:'10px 0',border:'none',background:'transparent',color:tab===t.id?A:MU,fontWeight:tab===t.id?900:600,fontSize:10,borderBottom:`3px solid ${tab===t.id?A:'transparent'}`,transition:'all .2s',display:'flex',flexDirection:'column',alignItems:'center',gap:2}}>
+              <span style={{fontSize:15}}>{t.ico}</span><span>{t.l}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+      <div style={{padding:'16px 14px 80px',maxWidth:600,margin:'0 auto'}}>
+        {tab==='dashboard'&&<TabDash enriched={enriched}/>}
+        {tab==='grafik'&&<TabGrafik enriched={enriched}/>}
+        {tab==='keuangan'&&<TabKeuangan data={data} enriched={enriched} onReload={onReload}/>}
+        {tab==='penjualan'&&<TabJual data={data} onReload={onReload}/>}
+        {tab==='gaji'&&<TabGaji enriched={enriched}/>}
+        {tab==='setting'&&<TabSetting data={data} onReload={onReload}/>}
+      </div>
+    </div>
+  );
+}
+
+// ─── dark atoms ───────────────────────────────────────────
+const DC=({title,children})=>(
+  <div style={{background:CA,borderRadius:18,padding:16,border:`1px solid ${BO}`,marginBottom:14}}>
+    {title&&<div style={{fontWeight:800,color:A,marginBottom:12,fontSize:14}}>{title}</div>}
+    {children}
+  </div>
+);
+const DKpi=({icon,label,value,color,sub})=>(
+  <div style={{background:CA,borderRadius:14,padding:'14px 12px',border:`1px solid ${BO}`}}>
+    <div style={{fontSize:20,marginBottom:4}}>{icon}</div>
+    <div style={{color:MU,fontSize:11,fontWeight:700,marginBottom:4}}>{label}</div>
+    <div style={{color,fontWeight:900,fontSize:15,lineHeight:1.2}}>{value}</div>
+    {sub&&<div style={{color:MU,fontSize:11,fontWeight:600,marginTop:2}}>{sub}</div>}
+  </div>
+);
+const Pill=({color,text})=><span style={{background:color+'18',border:`1px solid ${color}44`,borderRadius:8,padding:'3px 8px',color,fontSize:12,fontWeight:800}}>{text}</span>;
+const DEmpty=({text})=>(
+  <div style={{background:CA,borderRadius:18,padding:'40px 20px',textAlign:'center',marginTop:8}}>
+    <div style={{fontSize:44,marginBottom:12}}>🐣</div>
+    <div style={{color:MU,fontSize:14,fontWeight:600}}>{text}</div>
+  </div>
+);
+
+// ─── TAB DASHBOARD ────────────────────────────────────────
+function TabDash({enriched}){
+  const last=enriched[enriched.length-1];
+  if(!last)return <DEmpty text="Belum ada data. Minta petugas input data harian."/>;
+  const kpis=[
+    {icon:'🥚',label:'Total Butir',value:fmtN(last.totalSemua)+' butir',color:'#f59e0b'},
+    {icon:'⚖️',label:'Berat Bersih',value:fmtN(last.beratBersih,3)+' kg',color:'#60a5fa'},
+    {icon:'📦',label:'Stok Peti',value:fmtN(last.stockPeti,2)+' peti',color:'#a78bfa'},
+    {icon:'🐔',label:'Populasi',value:fmtN(last.popSesudah)+' ekor',color:'#34d399'},
+    {icon:'📊',label:'HD',value:fmtN(last.hd,1)+'%',color:'#fb923c'},
+    {icon:'📉',label:'FCR',value:fmtN(last.fcr,2),color:'#67e8f9'},
+    {icon:'🌾',label:'Feed Intake',value:fmtN(last.feedIntake,1)+' g/ekor',color:'#86efac'},
+    {icon:'💀',label:'Mortality',value:fmtN(last.mortalityRate,3)+'%',color:'#f87171'},
+  ];
+  return(
+    <div className="fade">
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:14}}>
+        <span style={{color:MU,fontSize:13,fontWeight:700}}>Data terakhir</span>
+        <span style={{background:BO,borderRadius:10,padding:'4px 14px',color:A,fontWeight:800,fontSize:13}}>{fmtS(last.tanggal)}</span>
+      </div>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:14}}>
+        {kpis.map(k=><DKpi key={k.label} {...k}/>)}
+      </div>
+      <DC title="📋 Detail Hari Terakhir">
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+          {[['Telur Bagus',fmtN(last.totalBagus)+' butir'],['Telur Bentes',fmtN(last.totalBentes)+' butir'],['Berat/Butir',fmtN(last.beratPerButir,1)+' gram'],['Pop. Awal',fmtN(last.popSebelum)+' ekor'],['Ayam Mati',fmtN(last.ayamMati)+' ekor'],['Pakan',fmtN(last.pakan,1)+' kg'],['Harga DO',Rp(last.hargaDO)+'/kg'],['Biaya Pakan',Rp(last.biayaPakan)]].map(([k,v])=>(
+            <div key={k} style={{background:'#0f1923',borderRadius:10,padding:'8px 12px'}}>
+              <div style={{fontSize:10,color:MU,fontWeight:700}}>{k}</div>
+              <div style={{fontWeight:800,fontSize:13,color:TX,marginTop:2}}>{v}</div>
+            </div>
+          ))}
+        </div>
+      </DC>
+      {enriched.length>1&&(
+        <DC title="📅 Riwayat 7 Hari">
+          {enriched.slice(-7).reverse().map(r=>(
+            <div key={r.tanggal} style={{background:'#0f1923',borderRadius:12,padding:'10px 12px',marginBottom:8,display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:6}}>
+              <span style={{color:MU,fontSize:12,fontWeight:700,minWidth:85}}>{fmtS(r.tanggal)}</span>
+              <div style={{display:'flex',gap:5,flexWrap:'wrap'}}>
+                <Pill color="#f59e0b" text={fmtN(r.totalSemua)+' butir'}/>
+                <Pill color="#60a5fa" text={fmtN(r.beratBersih,1)+' kg'}/>
+                <Pill color="#fb923c" text={fmtN(r.hd,1)+'%'}/>
+                {r.ayamMati>0&&<Pill color="#f87171" text={'💀'+r.ayamMati}/>}
+              </div>
+            </div>
+          ))}
+        </DC>
+      )}
+    </div>
+  );
+}
+
+// ─── TAB GRAFIK ───────────────────────────────────────────
+function TabGrafik({enriched}){
+  const [range,setRange]=useState('30');
+  if(!enriched.length)return <DEmpty text="Belum ada data untuk grafik"/>;
+  const cd=enriched.slice(-parseInt(range)).map(r=>({t:r.tanggal.slice(5),butir:r.totalSemua,berat:+r.beratBersih.toFixed(2),hd:+r.hd.toFixed(1),mati:r.ayamMati,fcr:+r.fcr.toFixed(2),intake:+r.feedIntake.toFixed(1),pop:r.popSesudah,peti:+r.stockPeti.toFixed(2)}));
+  return(
+    <div className="fade">
+      <div style={{display:'flex',gap:6,marginBottom:14}}>
+        {[['7','7H'],['14','14H'],['30','30H'],['90','3B']].map(([v,l])=>(
+          <button key={v} onClick={()=>setRange(v)} style={{padding:'8px 16px',fontSize:12,border:'none',borderRadius:10,background:range===v?A:CA,color:range===v?AD:MU,fontWeight:800}}>{l}</button>
+        ))}
+      </div>
+      {[['🥚 Jumlah Butir','butir','#f59e0b','bar'],['⚖️ Berat Bersih (kg)','berat','#60a5fa','line'],['📦 Stok Peti','peti','#a78bfa','bar'],['📊 HD (%)','hd','#fb923c','line'],['🌾 Feed Intake (g/ekor)','intake','#86efac','line'],['📉 FCR','fcr','#67e8f9','line'],['💀 Kematian','mati','#f87171','bar'],['🐔 Populasi','pop','#34d399','line']].map(([title,key,color,type])=>(
+        <DC key={key} title={title}><FChart data={cd} dataKey={key} color={color} type={type}/></DC>
+      ))}
+    </div>
+  );
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// TAB KEUANGAN — LAPORAN LABA RUGI
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+function TabKeuangan({data,enriched,onReload}){
+  const [subTab,setSubTab]=useState('laporan');
+  const [month,setMonth]=useState(MONTH());
+
+  // get unique months with data
+  const allMonths=[...new Set([
+    ...enriched.map(r=>monthOf(r.tanggal)),
+    ...data.penjualan.map(r=>monthOf(r.tanggal)),
+    ...data.pengeluaran.map(r=>monthOf(r.tanggal)),
+    ...data.pendapatanLain.map(r=>monthOf(r.tanggal)),
+    MONTH(),
+  ])].sort().reverse();
+
+  const lap=hitungBulanan(month,enriched,data.penjualan,data.pengeluaran,data.pendapatanLain);
+
+  const RpRow=({label,value,color='#60a5fa',indent=false,bold=false,size=14,separator=false})=>(
+    <>
+      {separator&&<div style={{height:1,background:BO,margin:'8px 0'}}/>}
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:`${bold?8:5}px ${indent?20:8}px`,borderRadius:8,background:bold?'rgba(255,255,255,.04)':'transparent'}}>
+        <span style={{color:indent?MU:TX,fontSize:indent?12:size,fontWeight:bold?900:600}}>{label}</span>
+        <span style={{color,fontSize:size,fontWeight:bold?900:700}}>{Rp(value)}</span>
+      </div>
+    </>
+  );
+
+  return(
+    <div className="fade">
+      {/* Month selector */}
+      <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:14}}>
+        <span style={{color:MU,fontSize:13,fontWeight:700,flexShrink:0}}>Periode:</span>
+        <select value={month} onChange={e=>setMonth(e.target.value)}
+          style={{flex:1,background:CA,border:`2px solid ${BO}`,borderRadius:12,color:TX,padding:'10px 14px',fontSize:15,fontWeight:700,outline:'none'}}>
+          {allMonths.map(m=><option key={m} value={m}>{fmtMonth(m)}</option>)}
+        </select>
+      </div>
+
+      {/* Sub tabs */}
+      <div style={{display:'flex',gap:6,marginBottom:16}}>
+        {[['laporan','📊 Laporan'],['keluar','➖ Catat Pengeluaran'],['masuk','➕ Pendapatan Lain']].map(([t,l])=>(
+          <button key={t} onClick={()=>setSubTab(t)} style={{flex:1,padding:'10px 4px',border:'none',borderRadius:12,background:subTab===t?A:CA,color:subTab===t?AD:MU,fontWeight:800,fontSize:11}}>
+            {l}
+          </button>
+        ))}
+      </div>
+
+      {subTab==='laporan'&&<LaporanBulanan lap={lap} month={month}/>}
+      {subTab==='keluar'&&<InputPengeluaran data={data} month={month} onReload={onReload}/>}
+      {subTab==='masuk'&&<InputPendapatanLain data={data} month={month} onReload={onReload}/>}
+    </div>
+  );
+}
+
+function LaporanBulanan({lap,month}){
+  const laba=lap.labaBersih;
+  const labaColor=laba>=0?'#4ade80':'#f87171';
+  const PRow=({label,value,indent,sep})=>(
+    <>
+      {sep&&<div style={{height:1,background:BO,margin:'6px 0'}}/>}
+      <div style={{display:'flex',justifyContent:'space-between',padding:`${indent?4:6}px ${indent?28:8}px`,borderRadius:6}}>
+        <span style={{color:indent?MU:TX,fontSize:indent?12:14,fontWeight:indent?600:700}}>{label}</span>
+        <span style={{color:indent?'#94a3b8':'#60a5fa',fontSize:indent?12:14,fontWeight:indent?600:800}}>{Rp(value)}</span>
+      </div>
+    </>
+  );
+  return(
+    <div>
+      {/* Hero laba */}
+      <div style={{background:laba>=0?'linear-gradient(135deg,#14532d,#16a34a)':'linear-gradient(135deg,#7f1d1d,#dc2626)',borderRadius:20,padding:'22px 20px',marginBottom:14,textAlign:'center'}}>
+        <div style={{color:'rgba(255,255,255,.7)',fontSize:13,fontWeight:700,marginBottom:4}}>{laba>=0?'🎉 LABA BERSIH':'⚠️ RUGI BERSIH'} — {fmtMonth(month)}</div>
+        <div style={{color:'#fff',fontWeight:900,fontSize:38}}>{Rp(Math.abs(laba))}</div>
+        <div style={{color:'rgba(255,255,255,.65)',fontSize:12,fontWeight:600,marginTop:6}}>{lap.hariKerja} hari kerja</div>
+      </div>
+
+      {/* PEMASUKAN */}
+      <DC title="📥 PEMASUKAN">
+        <PRow label="Penjualan Telur (lunas)" value={lap.pendJual} indent/>
+        {lap.pendPiutang>0&&<PRow label="Penjualan Telur (piutang)" value={lap.pendPiutang} indent/>}
+        {lap.pendAfkir>0&&<PRow label="Penjualan Ayam Afkir" value={lap.pendAfkir} indent/>}
+        {lap.pendPupuk>0&&<PRow label="Penjualan Pupuk/Kotoran" value={lap.pendPupuk} indent/>}
+        {lap.pendLainnya>0&&<PRow label="Pendapatan Lainnya" value={lap.pendLainnya} indent/>}
+        <div style={{height:1,background:BO,margin:'8px 0'}}/>
+        <div style={{display:'flex',justifyContent:'space-between',padding:'8px 8px',borderRadius:10,background:'rgba(74,222,128,.08)'}}>
+          <span style={{color:'#4ade80',fontSize:15,fontWeight:900}}>Total Pemasukan</span>
+          <span style={{color:'#4ade80',fontSize:15,fontWeight:900}}>{Rp(lap.totalPendapatan)}</span>
+        </div>
+        {lap.pendPiutang>0&&(
+          <div style={{marginTop:8,background:'rgba(251,146,60,.08)',border:'1px solid rgba(251,146,60,.3)',borderRadius:10,padding:'8px 12px',fontSize:12,color:'#fb923c',fontWeight:700}}>
+            ⚠️ Piutang belum terbayar: {Rp(lap.pendPiutang)} — belum dihitung sebagai pemasukan
+          </div>
+        )}
+      </DC>
+
+      {/* PENGELUARAN */}
+      <DC title="📤 PENGELUARAN">
+        <PRow label="Biaya Pakan" value={lap.biayaPakan} indent/>
+        <PRow label="Gaji Petugas" value={lap.biayaGaji} indent/>
+        {lap.biayaListrik>0&&<PRow label="Listrik / Air" value={lap.biayaListrik} indent/>}
+        {lap.biayaObat>0&&<PRow label="Obat & Vitamin" value={lap.biayaObat} indent/>}
+        {lap.biayaLainnya>0&&<PRow label="Lain-lain" value={lap.biayaLainnya} indent/>}
+        <div style={{height:1,background:BO,margin:'8px 0'}}/>
+        <div style={{display:'flex',justifyContent:'space-between',padding:'8px 8px',borderRadius:10,background:'rgba(248,113,113,.08)'}}>
+          <span style={{color:'#f87171',fontSize:15,fontWeight:900}}>Total Pengeluaran</span>
+          <span style={{color:'#f87171',fontSize:15,fontWeight:900}}>{Rp(lap.totalPengeluaran)}</span>
+        </div>
+      </DC>
+
+      {/* LABA */}
+      <div style={{background:laba>=0?'rgba(74,222,128,.08)':'rgba(248,113,113,.08)',border:`2px solid ${laba>=0?'#4ade8044':'#f8717144'}`,borderRadius:16,padding:'18px 16px'}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+          <span style={{color:labaColor,fontSize:17,fontWeight:900}}>{laba>=0?'💰 LABA BERSIH':'🔴 RUGI BERSIH'}</span>
+          <span style={{color:labaColor,fontSize:22,fontWeight:900}}>{Rp(Math.abs(laba))}</span>
+        </div>
+        <div style={{fontSize:12,color:MU,fontWeight:600}}>
+          {Rp(lap.totalPendapatan)} pemasukan − {Rp(lap.totalPengeluaran)} pengeluaran
+        </div>
+        {laba>0&&lap.hariKerja>0&&(
+          <div style={{marginTop:8,fontSize:12,color:'#86efac',fontWeight:700}}>
+            ≈ {Rp(laba/lap.hariKerja)} per hari kerja
+          </div>
+        )}
+      </div>
+
+      {/* Margin */}
+      {lap.totalPendapatan>0&&(
+        <DC title="📐 Margin">
+          {[
+            ['Margin Kotor (setelah pakan)',((lap.totalPendapatan-lap.biayaPakan)/lap.totalPendapatan*100)],
+            ['Margin Bersih (setelah semua biaya)',(laba/lap.totalPendapatan*100)],
+          ].map(([l,v])=>(
+            <div key={l} style={{marginBottom:10}}>
+              <div style={{display:'flex',justifyContent:'space-between',marginBottom:4}}>
+                <span style={{color:MU,fontSize:12,fontWeight:700}}>{l}</span>
+                <span style={{color:v>=0?'#4ade80':'#f87171',fontWeight:800,fontSize:13}}>{fmtN(v,1)}%</span>
+              </div>
+              <div style={{background:BO,borderRadius:99,height:6,overflow:'hidden'}}>
+                <div style={{width:`${Math.min(100,Math.max(0,v))}%`,height:'100%',background:v>=30?'#4ade80':v>=0?A:'#f87171',borderRadius:99,transition:'width .5s'}}/>
+              </div>
+            </div>
+          ))}
+        </DC>
+      )}
+    </div>
+  );
+}
+
+function InputPengeluaran({data,month,onReload}){
+  const [tanggal,setTanggal]=useState(TODAY());
+  const [kategori,setKategori]=useState('listrik');
+  const [keterangan,setKeterangan]=useState('');
+  const [jumlah,setJumlah]=useState(0);
+  const [saving,setSaving]=useState(false);
+  const [saved,setSaved]=useState(false);
+  const items=data.pengeluaran.filter(r=>monthOf(r.tanggal)===month).sort((a,b)=>b.tanggal.localeCompare(a.tanggal));
+  const total=items.reduce((s,r)=>s+r.jumlah,0);
+  const simpan=async()=>{
+    if(!jumlah)return;
+    setSaving(true);
+    await DB.insertPengeluaran({tanggal,kategori,keterangan,jumlah});
+    await onReload();setSaving(false);setSaved(true);setTimeout(()=>setSaved(false),2000);
+    setJumlah(0);setKeterangan('');
+  };
+  const hapus=async id=>{if(!confirm('Hapus?'))return;await DB.deletePengeluaran(id);await onReload();};
+  const KAT={listrik:'⚡ Listrik/Air',obat:'💊 Obat & Vitamin',lainnya:'📌 Lainnya'};
+  return(
+    <div style={{display:'flex',flexDirection:'column',gap:14}}>
+      {saved&&<div style={{background:'#1a3a2a',border:`2px solid #4ade80`,borderRadius:12,padding:'10px 16px',color:'#4ade80',fontWeight:800,textAlign:'center'}}>✅ Tersimpan!</div>}
+      <DC title="➕ Catat Pengeluaran Baru">
+        <Lbl>Tanggal</Lbl>
+        <input type="date" value={tanggal} onChange={e=>setTanggal(e.target.value)}
+          style={{width:'100%',fontSize:16,fontWeight:700,border:`2px solid ${BO}`,borderRadius:12,padding:'10px 14px',color:TX,background:'#0f1923',outline:'none',marginBottom:14}}/>
+        <Lbl>Kategori</Lbl>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:8,marginBottom:14}}>
+          {Object.entries(KAT).map(([k,l])=>(
+            <button key={k} onClick={()=>setKategori(k)} style={{padding:'12px 4px',border:`2.5px solid ${kategori===k?A:BO}`,borderRadius:12,background:kategori===k?AL:'transparent',color:kategori===k?AD:MU,fontWeight:800,fontSize:11,textAlign:'center'}}>
+              {l}
+            </button>
+          ))}
+        </div>
+        <Lbl>Keterangan <span style={{fontSize:11,color:MU,fontWeight:600}}>(opsional)</span></Lbl>
+        <input type="text" value={keterangan} onChange={e=>setKeterangan(e.target.value)} placeholder="contoh: PLN bulan ini"
+          style={{width:'100%',fontSize:14,border:`2px solid ${BO}`,borderRadius:12,padding:'10px 14px',color:TX,background:'#0f1923',outline:'none',marginBottom:14}}/>
+        <Lbl>Jumlah</Lbl>
+        <RpInput value={jumlah} onChange={setJumlah} placeholder="500.000"/>
+        <div style={{marginTop:14}}>
+          <BigBtn onClick={simpan} disabled={!jumlah} loading={saving} color={RE}>➖ Simpan Pengeluaran</BigBtn>
+        </div>
+      </DC>
+      {items.length>0&&(
+        <DC title={`📋 Pengeluaran ${fmtMonth(month)} — Total ${Rp(total)}`}>
+          {items.map(r=>(
+            <div key={r.id} style={{background:'#0f1923',borderRadius:12,padding:'10px 14px',marginBottom:8,display:'flex',justifyContent:'space-between',alignItems:'center',gap:8}}>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{display:'flex',gap:6,alignItems:'center',marginBottom:3}}>
+                  <span style={{background:BO,borderRadius:6,padding:'2px 7px',fontSize:11,fontWeight:800,color:A}}>{KAT[r.kategori]||r.kategori}</span>
+                  <span style={{color:MU,fontSize:11,fontWeight:600}}>{fmtS(r.tanggal)}</span>
+                </div>
+                {r.keterangan&&<div style={{color:MU,fontSize:12,fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{r.keterangan}</div>}
+              </div>
+              <div style={{display:'flex',alignItems:'center',gap:8,flexShrink:0}}>
+                <span style={{fontWeight:900,color:'#f87171',fontSize:14}}>{Rp(r.jumlah)}</span>
+                <button onClick={()=>hapus(r.id)} style={{background:'rgba(248,113,113,.1)',border:'none',borderRadius:8,padding:'4px 8px',color:'#f87171',fontSize:13}}>🗑️</button>
+              </div>
+            </div>
+          ))}
+        </DC>
+      )}
+    </div>
+  );
+}
+
+function InputPendapatanLain({data,month,onReload}){
+  const [tanggal,setTanggal]=useState(TODAY());
+  const [kategori,setKategori]=useState('afkir');
+  const [keterangan,setKeterangan]=useState('');
+  const [jumlah,setJumlah]=useState(0);
+  const [saving,setSaving]=useState(false);
+  const [saved,setSaved]=useState(false);
+  const items=data.pendapatanLain.filter(r=>monthOf(r.tanggal)===month).sort((a,b)=>b.tanggal.localeCompare(a.tanggal));
+  const total=items.reduce((s,r)=>s+r.jumlah,0);
+  const simpan=async()=>{
+    if(!jumlah)return;
+    setSaving(true);
+    await DB.insertPendapatanLain({tanggal,kategori,keterangan,jumlah});
+    await onReload();setSaving(false);setSaved(true);setTimeout(()=>setSaved(false),2000);
+    setJumlah(0);setKeterangan('');
+  };
+  const hapus=async id=>{if(!confirm('Hapus?'))return;await DB.deletePendapatanLain(id);await onReload();};
+  const KAT={afkir:'🐓 Ayam Afkir',pupuk:'🌿 Pupuk/Kotoran',lainnya:'📌 Lainnya'};
+  return(
+    <div style={{display:'flex',flexDirection:'column',gap:14}}>
+      {saved&&<div style={{background:'#1a3a2a',border:`2px solid #4ade80`,borderRadius:12,padding:'10px 16px',color:'#4ade80',fontWeight:800,textAlign:'center'}}>✅ Tersimpan!</div>}
+      <DC title="➕ Catat Pendapatan Lain">
+        <Lbl>Tanggal</Lbl>
+        <input type="date" value={tanggal} onChange={e=>setTanggal(e.target.value)}
+          style={{width:'100%',fontSize:16,fontWeight:700,border:`2px solid ${BO}`,borderRadius:12,padding:'10px 14px',color:TX,background:'#0f1923',outline:'none',marginBottom:14}}/>
+        <Lbl>Kategori</Lbl>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:8,marginBottom:14}}>
+          {Object.entries(KAT).map(([k,l])=>(
+            <button key={k} onClick={()=>setKategori(k)} style={{padding:'12px 4px',border:`2.5px solid ${kategori===k?GR:BO}`,borderRadius:12,background:kategori===k?GL:'transparent',color:kategori===k?'#15803d':MU,fontWeight:800,fontSize:11,textAlign:'center'}}>
+              {l}
+            </button>
+          ))}
+        </div>
+        <Lbl>Keterangan <span style={{fontSize:11,color:MU,fontWeight:600}}>(opsional)</span></Lbl>
+        <input type="text" value={keterangan} onChange={e=>setKeterangan(e.target.value)} placeholder="contoh: 50 ekor afkir × Rp 60.000"
+          style={{width:'100%',fontSize:14,border:`2px solid ${BO}`,borderRadius:12,padding:'10px 14px',color:TX,background:'#0f1923',outline:'none',marginBottom:14}}/>
+        <Lbl>Jumlah Diterima</Lbl>
+        <RpInput value={jumlah} onChange={setJumlah} placeholder="3.000.000"/>
+        <div style={{marginTop:14}}>
+          <BigBtn onClick={simpan} disabled={!jumlah} loading={saving} color={GR}>➕ Simpan Pendapatan</BigBtn>
+        </div>
+      </DC>
+      {items.length>0&&(
+        <DC title={`📋 Pendapatan Lain ${fmtMonth(month)} — Total ${Rp(total)}`}>
+          {items.map(r=>(
+            <div key={r.id} style={{background:'#0f1923',borderRadius:12,padding:'10px 14px',marginBottom:8,display:'flex',justifyContent:'space-between',alignItems:'center',gap:8}}>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{display:'flex',gap:6,alignItems:'center',marginBottom:3}}>
+                  <span style={{background:BO,borderRadius:6,padding:'2px 7px',fontSize:11,fontWeight:800,color:'#4ade80'}}>{KAT[r.kategori]||r.kategori}</span>
+                  <span style={{color:MU,fontSize:11,fontWeight:600}}>{fmtS(r.tanggal)}</span>
+                </div>
+                {r.keterangan&&<div style={{color:MU,fontSize:12,fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{r.keterangan}</div>}
+              </div>
+              <div style={{display:'flex',alignItems:'center',gap:8,flexShrink:0}}>
+                <span style={{fontWeight:900,color:'#4ade80',fontSize:14}}>{Rp(r.jumlah)}</span>
+                <button onClick={()=>hapus(r.id)} style={{background:'rgba(248,113,113,.1)',border:'none',borderRadius:8,padding:'4px 8px',color:'#f87171',fontSize:13}}>🗑️</button>
+              </div>
+            </div>
+          ))}
+        </DC>
+      )}
+    </div>
+  );
+}
+
+// ─── TAB PENJUALAN ────────────────────────────────────────
+function TabJual({data,onReload}){
+  const [busy,setBusy]=useState(null);
+  const sorted=[...data.penjualan].sort((a,b)=>b.tanggal.localeCompare(a.tanggal));
+  const totLunas=sorted.filter(p=>p.statusBayar==='lunas').reduce((s,p)=>s+p.jumlahPeti*10*p.hargaDO,0);
+  const totBelum=sorted.filter(p=>p.statusBayar!=='lunas').reduce((s,p)=>s+p.jumlahPeti*10*p.hargaDO,0);
+  const toggle=async id=>{setBusy(id);const c=data.penjualan.find(p=>p.id===id);await DB.updatePenjualan(id,{status_bayar:c.statusBayar==='lunas'?'belum lunas':'lunas'});await onReload();setBusy(null);};
+  const hapus=async id=>{if(!confirm('Hapus transaksi?'))return;setBusy(id);await DB.deletePenjualan(id);await onReload();setBusy(null);};
+  return(
+    <div className="fade">
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:14}}>
+        <DKpi icon="✅" label="Total Lunas" value={Rp(totLunas)} color="#34d399"/>
+        <DKpi icon="⏳" label="Belum Lunas" value={Rp(totBelum)} color="#f87171"/>
+      </div>
+      {sorted.length===0?<DEmpty text="Belum ada data penjualan"/>:sorted.map(p=>{
+        const total=p.jumlahPeti*10*p.hargaDO,lunas=p.statusBayar==='lunas';
+        return(
+          <div key={p.id} style={{background:CA,borderRadius:16,padding:16,borderLeft:`4px solid ${lunas?'#34d399':'#f87171'}`,marginBottom:12}}>
+            <div style={{display:'flex',justifyContent:'space-between',marginBottom:10}}>
+              <span style={{color:lunas?'#34d399':'#f87171',fontWeight:800,fontSize:14}}>{fmtS(p.tanggal)}</span>
+              <span style={{fontWeight:900,fontSize:20,color:TX}}>{Rp(total)}</span>
+            </div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:8,marginBottom:12}}>
+              {[['Jumlah',fmtN(p.jumlahPeti,1)+' peti'],['Harga DO',Rp(p.hargaDO)+'/kg'],['Pembeli',p.nama||'-']].map(([k,v])=>(
+                <div key={k}><div style={{color:MU,fontSize:10,fontWeight:700}}>{k}</div><div style={{color:TX,fontWeight:700,fontSize:13,marginTop:2}}>{v}</div></div>
+              ))}
+            </div>
+            <div style={{display:'flex',gap:8}}>
+              <button onClick={()=>toggle(p.id)} disabled={busy===p.id} style={{flex:1,padding:'9px 0',border:`2px solid ${lunas?'#34d399':'#f87171'}`,borderRadius:10,background:'transparent',color:lunas?'#34d399':'#f87171',fontSize:13,fontWeight:800}}>
+                {busy===p.id?'...':(lunas?'✅ Lunas':'⏳ Belum')} — ubah
+              </button>
+              <button onClick={()=>hapus(p.id)} style={{padding:'9px 14px',border:`2px solid ${BO}`,borderRadius:10,background:'transparent',color:MU,fontSize:14}}>🗑️</button>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ─── TAB GAJI ────────────────────────────────────────────
+function TabGaji({enriched}){
+  const [filter,setFilter]=useState('bulan');
+  const month=new Date().toISOString().slice(0,7);
+  const filtered=filter==='bulan'?enriched.filter(r=>r.tanggal.slice(0,7)===month):enriched.slice(-7);
+  const totPokok=filtered.length*70000,totKomisi=filtered.reduce((s,r)=>s+r.komisi,0);
+  return(
+    <div className="fade">
+      <div style={{display:'flex',gap:8,marginBottom:14}}>
+        {[['bulan','Bulan Ini'],['7','7 Hari']].map(([v,l])=>(
+          <button key={v} onClick={()=>setFilter(v)} style={{padding:'10px 20px',fontSize:13,border:'none',borderRadius:10,background:filter===v?A:CA,color:filter===v?AD:MU,fontWeight:800}}>{l}</button>
+        ))}
+      </div>
+      <div style={{background:'linear-gradient(135deg,#16a34a,#15803d)',borderRadius:20,padding:'20px 22px',marginBottom:14}}>
+        <div style={{color:'rgba(255,255,255,.7)',fontSize:13,fontWeight:700,marginBottom:4}}>💰 Total Gaji Periode</div>
+        <div style={{color:'#fff',fontWeight:900,fontSize:34}}>{Rp(Math.round(totPokok+totKomisi))}</div>
+        <div style={{color:'rgba(255,255,255,.7)',fontSize:13,fontWeight:700,marginTop:6}}>{filtered.length} hari · Pokok {Rp(totPokok)} · Komisi {Rp(Math.round(totKomisi))}</div>
+      </div>
+      <DC title="ℹ️ Cara Hitung Gaji">
+        <div style={{fontSize:13,color:MU,lineHeight:2,fontWeight:600}}>
+          <div>📌 Pokok = <b style={{color:TX}}>Rp 70.000 / hari kerja</b></div>
+          <div>📌 Komisi = <b style={{color:A}}>4% × (nilai telur − biaya pakan)</b></div>
+          <div>📌 Nilai telur = Berat Bersih × Harga DO</div>
+          <div>📌 Biaya pakan = Pakan (kg) × Harga per kg</div>
+        </div>
+      </DC>
+      {filtered.length===0?<DEmpty text="Belum ada data"/>:(
+        <DC title="📋 Rincian Per Hari">
+          {[...filtered].reverse().map(r=>(
+            <div key={r.tanggal} style={{background:'#0f1923',borderRadius:12,padding:'12px 14px',marginBottom:8}}>
+              <div style={{display:'flex',justifyContent:'space-between',marginBottom:8}}>
+                <span style={{color:MU,fontSize:13,fontWeight:700}}>{fmtS(r.tanggal)}</span>
+                <span style={{color:'#4ade80',fontWeight:900,fontSize:17}}>{Rp(Math.round(r.totalGaji))}</span>
+              </div>
+              <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:6}}>
+                {[['Pokok',Rp(70000),TX],['Komisi',Rp(Math.round(r.komisi)),'#4ade80'],['Berat',fmtN(r.beratBersih,2)+' kg',TX],['DO',Rp(r.hargaDO),TX]].map(([k,v,c])=>(
+                  <div key={k}><div style={{color:MU,fontSize:10,fontWeight:700}}>{k}</div><div style={{color:c,fontWeight:700,fontSize:12,marginTop:2}}>{v}</div></div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </DC>
+      )}
+    </div>
+  );
+}
+
+// ─── TAB SETTING ─────────────────────────────────────────
+function TabSetting({data,onReload}){
+  const [populasi,setPopulasi]=useState(data.settings.populasiAwal);
+  const [pin,setPin]=useState(data.settings.pin);
+  const [saving,setSaving]=useState(false);
+  const [saved,setSaved]=useState(false);
+  const simpan=async()=>{setSaving(true);await DB.saveSettings({populasiAwal:parseInt(populasi)||0,pin});await onReload();setSaving(false);setSaved(true);setTimeout(()=>setSaved(false),2000);};
+  const inp={fontSize:18,border:`2px solid ${BO}`,borderRadius:12,padding:'13px 16px',width:'100%',background:'#0f1923',color:TX,outline:'none',fontWeight:700};
+  return(
+    <div className="fade">
+      {saved&&<div style={{background:'#1a3a2a',border:'2px solid #34d399',borderRadius:12,padding:'12px 18px',color:'#34d399',fontWeight:800,textAlign:'center',marginBottom:14}}>✅ Tersimpan!</div>}
+      <DC title="🐔 Populasi Ayam Awal">
+        <div style={{color:MU,fontSize:13,marginBottom:10,fontWeight:600}}>Jumlah ayam saat sistem pertama dipakai</div>
+        <div style={{display:'flex',gap:10,alignItems:'center'}}>
+          <input type="number" min="0" value={populasi} onChange={e=>setPopulasi(e.target.value)} style={inp}/>
+          <span style={{color:MU,flexShrink:0,fontWeight:700,fontSize:14}}>ekor</span>
+        </div>
+      </DC>
+      <DC title="🔐 PIN Pemilik">
+        <div style={{color:MU,fontSize:13,marginBottom:10,fontWeight:600}}>Maksimal 6 digit angka</div>
+        <input type="password" maxLength={6} value={pin} onChange={e=>setPin(e.target.value)} style={{...inp,letterSpacing:14,textAlign:'center',fontSize:32}}/>
+      </DC>
+      <button onClick={simpan} disabled={saving} style={{width:'100%',padding:'17px 0',background:`linear-gradient(135deg,${A},${AD})`,border:'none',borderRadius:14,color:'#fff',fontSize:17,fontWeight:900,boxShadow:`0 6px 20px ${A}33`}}>
+        {saving?'⏳ Menyimpan...':'💾 Simpan Pengaturan'}
+      </button>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>
